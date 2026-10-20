@@ -1,0 +1,50 @@
+
+![MalChela web interface](../images/malchela_screenshot.png)
+
+<p align="center"><strong> MalChela Web Interface</p>
+
+![MalChela CLI](../images/malchela_cli_screenshot.png)
+
+<p align="center"><strong> MalChela CLI</p>
+
+<h2 style="text-align: center;">Analyze</h2>
+<p style="text-align: center;">
+  One-click auto-triage: point Analyze at a file, folder, or .app bundle and it classifies everything with File Miner, dispatches every tool it suggests, and produces a combined <strong>MalChela Summary</strong> rollup report. See the <a href="analyze.md">Analyze</a> page for details.
+</p>
+
+<h2 style="text-align: center;">MalChela Core Tools</h2>
+<p style="text-align: center;">
+  These built-in programs provide fast, flexible functionality for forensics and malware triage.
+</p>
+
+<table style="margin-left: 8%; width: 100%;">
+  <thead>
+    <tr>
+      <th>Program</th>
+      <th>Function</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Combine YARA</td><td>Point it at a directory of YARA files and it will output one combined rule</td></tr>
+    <tr><td>Extract Samples</td><td>Point it at a directory of password protected malware files to extract all</td></tr>
+    <tr><td>File Analyzer</td><td>Get the hash, entropy, packing, PE info, YARA and VT match status for a file</td></tr>
+    <tr><td>File Miner</td><td>Scans a folder for file type mismatches and metadata, and provides suggested tools</td></tr>
+    <tr><td>Hash Check</td><td>Check a hash against a .txt or .tsv lookup table</td></tr>
+    <tr><td>Hash It</td><td>Point it to a file and get the MD5, SHA1 and SHA256 hash</td></tr>
+    <tr><td>mStrings</td><td>Analyzes files — including Mach-O binaries and .app bundles — with Sigma rules (YAML), extracts strings, matches ReGex</td></tr>
+    <tr><td>MZHash</td><td>Recurse a directory, for files with MZ header, create hash list and lookup table</td></tr>
+    <tr><td>MZcount</td><td>Recurse a directory, uses YARA to count MZ, Zip, PDF, other</td></tr>
+    <tr><td>NSRL Query</td><td>Query a MD5 or SHA1 hash against NSRL</td></tr>
+    <tr><td>Strings to YARA</td><td>Prompts for metadata and strings (text file) to create a YARA rule</td></tr>
+    <tr><td>Threat Intel Query</td><td>Multi-source hash and URL lookup. Hash: VT, MB, OTX, HA, FileScan, Malshare, MetaDefender, ObjectiveSee. URL: VT, urlscan.io, Google Safe Browsing. Web interface supports file-to-hash and QR code decode.*</td></tr>
+    <tr><td>XMZHash</td><td>Recurse a directory, for files without MZ, Zip or PDF header, create hash list and lookup table</td></tr>
+  </tbody>
+</table>
+
+<p style="text-align: center;">
+  MalChela also includes a dedicated <a href="../mac/">Mac Analysis</a> tool stack for static analysis of macOS binaries, bundles, and property lists.
+</p>
+
+<p style="text-align: center;">
+  <strong>*Threat Intel Query supports optional API keys for its sources.</strong> Keys can be managed via the API Keys panel in the MalChela web interface or by placing them in the <code>api/</code> directory. Sources without configured keys are skipped automatically.
+</p>

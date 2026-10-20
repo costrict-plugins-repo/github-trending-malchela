@@ -1,0 +1,22 @@
+{
+  "name": "MalChela Analysis Toolkit",
+  "short_name": "MalChela",
+  "description": "YARA & Malware Analysis Toolkit — Remote Interface",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a1a",
+  "theme_color": "#c75000",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icons/malchela_icon_192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/malchela_icon_512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

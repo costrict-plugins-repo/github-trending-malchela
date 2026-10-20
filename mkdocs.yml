@@ -1,0 +1,74 @@
+site_name: MalChela Documentation
+repo_url: https://github.com/dwmetz/MalChela
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: black
+    accent: cyan
+  features:
+    - navigation.tabs
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+plugins:
+  - search
+  - with-pdf:
+      output_path: "pdf/user-guide.pdf"
+      cover_subtitle: "4.3"
+      cover_logo: "images/malchela_steampunk.png"
+      exclude_pages:
+        - "^$"
+
+extra_css:
+  - stylesheets/colors.css
+nav:
+  - Home: index.md
+  - About: about.md
+  - Installation: install.md
+  - Navigation: navigation.md
+  - Configuration:
+      - tools.yaml: configuration/tools-yaml.md
+      - api configuration: configuration/api-configuration.md
+      - offline mode: configuration/offline-mode.md
+  - Case Management: cases.md
+  - AI Integration & MCP: mcp.md
+  - Core Tools:
+      - Overview: coretools/index.md
+      - Usage: coretools/usage.md
+      - Analyze: coretools/analyze.md
+      - CombineYARA: coretools/combine_yara.md
+      - ExtractSamples: coretools/extract_samples.md
+      - FileAnalyzer: coretools/fileanalyzer.md
+      - FileMiner: coretools/fileminer.md
+      - HashCheck: coretools/hashcheck.md
+      - HashIt: coretools/hashit.md
+      - TiQuery: coretools/tiquery.md
+      - MStrings: coretools/mstrings.md
+      - MITRE Lookup: coretools/mitre_lookup.md
+      - MZCount: coretools/mzcount.md      
+      - MZHash: coretools/mzhash.md
+      - NSRLQuery: coretools/nsrlquery.md
+      - StringsToYARA: coretools/strings_to_yara.md
+      - XMZHash: coretools/xmzhash.md
+
+  - Mac Analysis:
+      - Overview: mac/index.md
+      - Analyze: coretools/analyze.md
+      - Code Sign Check: mac/codesign_check.md
+      - dppExtract: mac/dpp_extract.md
+      - Mach-O Info: mac/macho_info.md
+      - MStrings: coretools/mstrings.md
+      - Plist Analyzer: mac/plist_analyzer.md
+
+  - Third-Party Tools:
+      - Integrating Third Party Tools: tools/index.md
+      - Configuration Reference: tools/tools-yaml.md
+      - Enhanced Integrations: tools/enhanced.md
+      - TShark: tools/tshark.md
+      - PCAP to CSV: tools/pcap_to_csv.md
+      - Volatility 3: tools/vol3.md
+      - YARA-X: tools/yara-x.md
+      - Python Integrations: tools/python.md
+  - REMnux Mode: remnux.md
+  - Support: support.md

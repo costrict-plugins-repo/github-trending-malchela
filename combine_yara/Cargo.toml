@@ -1,0 +1,11 @@
+[package]
+name = "combine_yara"
+version = "4.3.1"
+edition = "2021"
+
+[dependencies]
+walkdir = "2" #Or newer
+colored = "2" #Or newer
+common_config = { path = "../common_config" }
+chrono = "0.4.43"
+clap = { version = "4", features = ["derive"] }

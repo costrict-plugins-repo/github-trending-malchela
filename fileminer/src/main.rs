@@ -1,0 +1,615 @@
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
+use std::path::Path;
+use common_config;
+use sha2::{Sha256, Digest};
+use clap::Parser;
+use serde::Serialize;
+use walkdir::WalkDir;
+use infer;
+use std::process::Command;
+use tabled::Tabled;
+use std::env;
+
+
+fn join_suggested_tools(tools: &Vec<(String, String)>) -> String {
+    tools.iter().map(|(label, _)| label.clone()).collect::<Vec<_>>().join(", ")
+}
+
+fn simplify_mime(mime: &str) -> &str {
+    match mime {
+        "application/vnd.microsoft.portable-executable" => "PE-EXE",
+        "application/zip" => "ZIP",
+        "application/pdf" => "PDF",
+        "image/jpeg" => "JPG",
+        "image/png" => "PNG",
+        "text/plain" => "TXT",
+        "Unknown" => "Unknown",
+        _ => "Other",
+    }
+}
+
+fn format_size(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1_048_576 => format!("{:.1} MB", b as f64 / 1_048_576.0),
+        b if b >= 1024 => format!("{:.1} KB", b as f64 / 1024.0),
+        b => format!("{} B", b),
+    }
+}
+
+#[derive(Parser)]
+#[command(name = "FileMiner")]
+#[command(about = "Analyze files in a directory by magic bytes and hash (formerly MismatchMiner)", long_about = None)]
+struct Cli {
+    #[arg(value_name = "PATH", help = "Directory or file to analyze")]
+    path: Option<String>,
+
+    #[arg(long, help = "Optional case name to save output under")]
+    case: Option<String>,
+
+    #[arg(short, long, help = "Save output to file", default_value_t = false)]
+    output: bool,
+
+    #[arg(short = 't', long, help = "Save as TXT format", default_value_t = false)]
+    text: bool,
+
+    #[arg(short = 'j', long, help = "Save as JSON format", default_value_t = false)]
+    json: bool,
+
+    #[arg(short = 'm', long, help = "Save as Markdown format", default_value_t = false)]
+    markdown: bool,
+
+    #[arg(long = "mismatch", help = "Only display entries with extension mismatches", default_value_t = false)]
+    mismatches_only: bool,
+
+    #[arg(long, help = "Disable interactive prompt (GUI mode)", default_value_t = false)]
+    no_prompt: bool,
+}
+
+#[derive(Serialize, Clone)]
+struct ScanResult {
+    filename: String,
+    filepath: String,
+    filetype: String,
+    size: u64,
+    sha256: String,
+    sha1: String,
+    md5: String,
+    suggested_tools: Vec<(String, String)>,
+    extension_label: String,
+    extension_mismatch: bool,
+    actual_type: String,
+    extension_inferred: String,
+}
+
+impl Tabled for ScanResult {
+    const LENGTH: usize = 9;
+
+    fn fields(&self) -> Vec<std::borrow::Cow<'_, str>> {
+        use std::borrow::Cow;
+        vec![
+            Cow::from(self.filename.as_str()),
+            Cow::from(self.filepath.as_str()),
+            Cow::from(simplify_mime(&self.actual_type)),
+            Cow::from(format_size(self.size)),
+            Cow::from(self.sha256.as_str()),
+            Cow::from(self.extension_label.as_str()),
+            Cow::from(self.extension_inferred.as_str()),
+            Cow::from(self.extension_mismatch.to_string()),
+            Cow::from(join_suggested_tools(&self.suggested_tools)),
+        ]
+    }
+
+    fn headers() -> Vec<std::borrow::Cow<'static, str>> {
+        use std::borrow::Cow;
+        vec![
+            Cow::from("Filename"),
+            Cow::from("Path"),
+            Cow::from("Type"),
+            Cow::from("Size"),
+            Cow::from("SHA256"),
+            Cow::from("Ext"),
+            Cow::from("Inferred"),
+            Cow::from("Mismatch"),
+            Cow::from("Suggested"),
+        ]
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    let is_gui = std::env::var("MALCHELA_GUI_MODE").is_ok();
+    let dir_path = match cli.path {
+        Some(p) => p,
+        None => {
+            print!("Enter directory or file path to analyze: ");
+            io::stdout().flush().unwrap();
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).unwrap();
+            input.trim().to_string()
+        }
+    };
+
+    let case_name = cli.case.as_deref();
+    if let Some(case) = case_name {
+        common_config::ensure_case_json(case);
+    }
+
+    let save_json = cli.json || cli.case.is_some();
+
+    let target = Path::new(&dir_path);
+    let is_single_file = target.is_file();
+    if !is_single_file && !target.is_dir() {
+        eprintln!("Provided path is not a file or directory.");
+        std::process::exit(1);
+    }
+
+    let scan_result = if is_single_file {
+        analyze_single_file(&dir_path, save_json, case_name)
+    } else {
+        analyze_directory(&dir_path, save_json, case_name)
+    };
+
+    match scan_result {
+        Ok(results) => {
+            use std::collections::HashMap;
+
+            let display_results: Vec<_> = if cli.mismatches_only {
+                results.iter().filter(|r| r.extension_mismatch).collect()
+            } else {
+                results.iter().collect()
+            };
+
+            let mut grouped: HashMap<String, Vec<&ScanResult>> = HashMap::new();
+            for res in &display_results {
+                grouped.entry(res.sha256.clone()).or_default().push(res);
+            }
+
+            if is_gui || cli.no_prompt {
+                #[derive(Serialize)]
+                struct FileMinerOutput {
+                    tool: &'static str,
+                    total: usize,
+                    results: Vec<ScanResult>,
+                }
+
+                let output = FileMinerOutput {
+                    tool: "fileminer",
+                    total: display_results.len(),
+                    results: display_results.clone().into_iter().cloned().collect(),
+                };
+
+                let serialized = serde_json::to_string_pretty(&output)?;
+                println!("{}", serialized);
+                return Ok(());
+            }
+
+            if !is_gui && !cli.no_prompt {
+                println!("Analysis complete.\n");
+                loop {
+                    use tabled::builder::Builder;
+                    use tabled::settings::{Style, Modify, object::{Columns}, Alignment, Width};
+
+                    let mut builder = Builder::default();
+                    builder.push_record([
+                        "#", "Filename", "Path", "Type", "Size", "SHA256", "Ext", "Inferred", "Mismatch", "Suggested"
+                    ]);
+
+                    for (i, r) in display_results.iter().enumerate() {
+                        builder.push_record([
+                            i.to_string(),
+                            r.filename.clone(),
+                            r.filepath.clone(),
+                            simplify_mime(&r.actual_type).to_string(),
+                            format_size(r.size),
+                            r.sha256.clone(),
+                            r.extension_label.clone(),
+                            r.extension_inferred.clone(),
+                            r.extension_mismatch.to_string(),
+                            join_suggested_tools(&r.suggested_tools),
+                        ]);
+                    }
+
+                    let mismatch_column = Columns::single(9);
+                    let mut built = builder.build();
+                    let table = built
+                        .with(Style::modern())
+                        .with(Modify::new(Columns::single(1)).with(Width::wrap(25).keep_words(true)))
+                        .with(Modify::new(Columns::new(0..)).with(Alignment::left()))
+                        .with(Modify::new(Columns::new(0..)).with(Width::wrap(40).keep_words(true)))
+                        .with(Modify::new(Columns::single(2)).with(Width::wrap(30).keep_words(true)))
+                        .with(Modify::new(Columns::single(5)).with(Width::wrap(30).keep_words(true)))
+                        .with(Modify::new(mismatch_column).with(Width::wrap(24).keep_words(true)));
+
+                    println!("{}", table);
+
+                    println!("\nSelect a file to process (or press 'x' to exit):");
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input).unwrap();
+                    let trimmed = input.trim();
+                    if trimmed.eq_ignore_ascii_case("x") {
+                        break;
+                    }
+                    let sel_index: usize = match trimmed.parse::<usize>() {
+                        Ok(num) if num < results.len() => num,
+                        _ => {
+                            eprintln!("Invalid selection.");
+                            continue;
+                        }
+                    };
+                    let selected_file = &results[sel_index];
+
+                    let mime_category = if selected_file.filetype.contains("portable-executable") {
+                        "portable-executable"
+                    } else if selected_file.filetype == "Unknown" {
+                        "unknown"
+                    } else if selected_file.filetype.starts_with("application/") {
+                        "application"
+                    } else if selected_file.filetype.starts_with("text/") {
+                        "text"
+                    } else {
+                        "other"
+                    };
+
+                    println!("\nAvailable tools for {}:", mime_category);
+                    for (i, (label, _)) in selected_file.suggested_tools.iter().enumerate() {
+                        println!("- [{}] {}", i + 1, label);
+                    }
+                    println!("Select tool:");
+                    input.clear();
+                    io::stdin().read_line(&mut input).unwrap();
+                    let tool_index: usize = match input.trim().parse::<usize>() {
+                        Ok(i) if i > 0 && i <= selected_file.suggested_tools.len() => i - 1,
+                        _ => {
+                            eprintln!("Invalid tool selection.");
+                            continue;
+                        }
+                    };
+
+                    let (_, tool_name) = &selected_file.suggested_tools[tool_index];
+
+                    println!("Running {} on {}...", tool_name, selected_file.filename);
+
+
+
+
+                    let exe_root = env::current_exe()?.parent().unwrap().to_path_buf();
+                    let binary_path = exe_root.join(tool_name);
+                    let workspace_root = exe_root.parent().and_then(|p| p.parent()).unwrap(); // goes up two levels to workspace root
+                    if !binary_path.exists() {
+                        eprintln!("Error: Tool binary not found at {}", binary_path.display());
+                        std::process::exit(1);
+                    }
+                    let mut args: Vec<String> = vec![];
+                    if tool_name == "tiquery" {
+                        args.push(selected_file.sha256.clone());
+                    } else if tool_name == "nsrlquery" {
+                        args.push(selected_file.md5.clone());
+                    } else {
+                        args.push(selected_file.filepath.clone());
+                    }
+                    if cli.output {
+                        args.push("-o".to_string());
+                    }
+                    if cli.text {
+                        args.push("-t".to_string());
+                    }
+                    if cli.json {
+                        args.push("-j".to_string());
+                    }
+                    if cli.markdown {
+                        args.push("-m".to_string());
+                    }
+                    if let Some(case) = case_name {
+                        args.push("--case".to_string());
+                        args.push(case.to_string());
+                    }
+
+                    println!("→ CWD: {}", env::current_dir()?.display());
+                    println!("→ Launching: {}", binary_path.display());
+                    println!("→ Args: {:?}", args);
+
+                    let status = Command::new(&binary_path)
+                        .args(&args)
+                        .current_dir(workspace_root)
+                        .envs(env::vars())
+                        .status()
+                        .expect("Failed to run tool");
+
+                    if !status.success() {
+                        eprintln!("{} failed to execute properly.", tool_name);
+                    }
+
+                    println!("\nPress Enter to continue, or type 'x' to exit.");
+                    input.clear();
+                    io::stdin().read_line(&mut input).unwrap();
+                    if input.trim().eq_ignore_ascii_case("x") {
+                        break;
+                    }
+                }
+            }
+        }
+        Err(e) => eprintln!("Error: {}", e),
+    }
+    Ok(())
+}
+
+fn analyze_one_file(path: &Path) -> Result<ScanResult, Box<dyn std::error::Error>> {
+            let file_type = identify_magic(&path)?;
+            let actual_type = file_type.clone();
+            let metadata = fs::metadata(&path)?;
+            let file_size = metadata.len();
+            let sha256 = calculate_sha256(&path)?;
+            let md5 = calculate_md5(&path)?;
+            let sha1 = calculate_sha1(&path)?;
+
+            let extension = path
+                .extension()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
+
+            let extension_inferred = if file_type.contains("portable-executable") {
+                "exe"
+            } else if file_type.contains("zip") {
+                "zip"
+            } else if file_type.contains("jpeg") {
+                "jpg"
+            } else if file_type.contains("png") {
+                "png"
+            } else if file_type.contains("pdf") {
+                "pdf"
+            } else if file_type.starts_with("text/") {
+                "txt"
+            } else {
+                ""
+            }.to_string();
+
+            let ext_mismatch = match extension.as_str() {
+                "exe" | "dll" => !file_type.contains("portable-executable"),
+                "txt" | "log" => !file_type.starts_with("text/") && !looks_like_text(&path),
+                "zip" => !file_type.contains("zip"),
+                "jpg" | "jpeg" => !file_type.contains("jpeg"),
+                "png" => !file_type.contains("png"),
+                "pdf" => !file_type.contains("pdf"),
+                _ => false,
+            };
+
+            let mut suggested_tools = Vec::new();
+            if file_type.contains("portable-executable") {
+                suggested_tools.push(("FileAnalyzer".into(), "fileanalyzer".into()));
+                suggested_tools.push(("mStrings".into(), "mstrings".into()));
+                suggested_tools.push(("tiquery".into(), "tiquery".into()));
+                suggested_tools.push(("nsrlquery".into(), "nsrlquery".into()));
+            } else if file_type.contains("x-mach-binary") || file_type.contains("x-mach-o") {
+                suggested_tools.push(("Mach-O Info".into(), "macho_info".into()));
+                suggested_tools.push(("Code Sign Check".into(), "codesign_check".into()));
+                suggested_tools.push(("mStrings".into(), "mstrings".into()));
+                suggested_tools.push(("tiquery".into(), "tiquery".into()));
+                suggested_tools.push(("nsrlquery".into(), "nsrlquery".into()));
+            } else if file_type.contains("x-executable") {
+                // infer maps ELF (any subtype — exec, shared object, core, relocatable)
+                // to a single "application/x-executable" MIME, with no dedicated
+                // branch here to catch it — it fell through every check below with
+                // an empty suggested_tools list even though mStrings/detections.yaml
+                // works fine against ELF. Observed on a real m68k ELF malware sample.
+                suggested_tools.push(("FileAnalyzer".into(), "fileanalyzer".into()));
+                suggested_tools.push(("mStrings".into(), "mstrings".into()));
+                suggested_tools.push(("tiquery".into(), "tiquery".into()));
+                suggested_tools.push(("nsrlquery".into(), "nsrlquery".into()));
+            } else if file_type.contains("x-apple-property-list") || file_type.contains("application/xml") {
+                suggested_tools.push(("Plist Analyzer".into(), "plist_analyzer".into()));
+            } else if file_type.starts_with("text/") {
+                // Shell/Python/plain-text scripts land here — e.g. a dpp_extract'd
+                // PKG's preinstall/postinstall, where the real payload logic often
+                // lives when Payload itself is empty. mStrings runs detections.yaml
+                // against the script's own text, which is exactly the analysis a
+                // script needs.
+                suggested_tools.push(("FileAnalyzer".into(), "fileanalyzer".into()));
+                suggested_tools.push(("mStrings".into(), "mstrings".into()));
+                suggested_tools.push(("tiquery".into(), "tiquery".into()));
+                suggested_tools.push(("nsrlquery".into(), "nsrlquery".into()));
+            } else if file_type == "Unknown" && file_size > 0 && looks_like_text(&path) {
+                // infer has no magic signature for plain text at all, so any
+                // script (shell/Python/etc.) with no recognizable extension lands
+                // here as "Unknown" just like a packed/unknown binary would. Route
+                // it the same as the text/* branch above instead of the generic
+                // binary fallback below, or mstrings/detections.yaml never runs
+                // against it. Originally gated on file_size > 10_000 (matching the
+                // binary-unknown branch below), which caught XCSSET's b.sh/jey.sh
+                // (47KB/36KB) but silently excluded small-but-critical scripts —
+                // a Proton sample's cb.py (5,992 bytes) and ch.py (1,772 bytes),
+                // the exact files carrying its keychain/Chrome-credential-theft
+                // signatures, got zero suggested tools under the 10KB floor. The
+                // size gate made sense for the binary-unknown branch (small
+                // unknown blobs are usually junk/resource data, not worth
+                // FileAnalyzer/tiquery), but looks_like_text() already does the
+                // real filtering work here — a small legitimate script is just
+                // as analytically important as a large one.
+                suggested_tools.push(("FileAnalyzer".into(), "fileanalyzer".into()));
+                suggested_tools.push(("mStrings".into(), "mstrings".into()));
+                suggested_tools.push(("tiquery".into(), "tiquery".into()));
+                suggested_tools.push(("nsrlquery".into(), "nsrlquery".into()));
+            } else if file_type == "Unknown" && file_size > 10_000 {
+                suggested_tools.push(("FileAnalyzer".into(), "fileanalyzer".into()));
+                suggested_tools.push(("tiquery".into(), "tiquery".into()));
+                suggested_tools.push(("nsrlquery".into(), "nsrlquery".into()));
+            }
+
+            // Also suggest plist_analyzer for .plist files by extension
+            if path.extension().and_then(|e| e.to_str()) == Some("plist") {
+                if suggested_tools.is_empty() {
+                    suggested_tools.push(("Plist Analyzer".into(), "plist_analyzer".into()));
+                }
+            }
+
+            // Compiled AppleScript (.scpt/.scptd) by extension: infer has no
+            // magic-byte signature for this format at all, so it always
+            // reports Unknown regardless of size — the size>10_000 branch
+            // above never has a chance to catch these, since malicious .scpt
+            // payloads are typically a few KB. Without this, a compiled
+            // AppleScript dropper gets zero suggested tools and Analyze
+            // silently never runs mstrings against it (observed: an XCSSET
+            // sample's two malicious .scpt payloads got scanned by nothing
+            // at all in a directory-wide Analyze run, while every other file
+            // in the same directory got its normal suggestions).
+            if matches!(path.extension().and_then(|e| e.to_str()), Some("scpt") | Some("scptd")) {
+                if suggested_tools.is_empty() {
+                    suggested_tools.push(("FileAnalyzer".into(), "fileanalyzer".into()));
+                    suggested_tools.push(("mStrings".into(), "mstrings".into()));
+                    suggested_tools.push(("tiquery".into(), "tiquery".into()));
+                    suggested_tools.push(("nsrlquery".into(), "nsrlquery".into()));
+                }
+            }
+
+
+
+            Ok(ScanResult {
+                filename: path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string(),
+                filepath: path.to_string_lossy().to_string(),
+                filetype: file_type,
+                size: file_size,
+                sha256,
+                sha1,
+                md5,
+                suggested_tools,
+                extension_label: extension,
+                extension_mismatch: ext_mismatch,
+                actual_type,
+                extension_inferred,
+            })
+}
+
+fn analyze_directory(
+    path: &str,
+    save_json: bool,
+    case: Option<&str>,
+) -> Result<Vec<ScanResult>, Box<dyn std::error::Error>> {
+    let mut results = Vec::new();
+
+    for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+        let entry_path = entry.path().to_path_buf();
+        if entry_path.is_file() {
+            results.push(analyze_one_file(&entry_path)?);
+        }
+    }
+
+    save_results_json(&results, save_json, case)?;
+
+    Ok(results)
+}
+
+// A single file given directly on the command line (rather than discovered
+// via WalkDir): scanned in isolation so pointing FileMiner at one file never
+// pulls in — and hashes — every other file in its containing directory,
+// which for a real-world drop folder (Downloads, an inbox) can be large
+// enough to make the scan take drastically longer than the caller expects.
+fn analyze_single_file(
+    path: &str,
+    save_json: bool,
+    case: Option<&str>,
+) -> Result<Vec<ScanResult>, Box<dyn std::error::Error>> {
+    let results = vec![analyze_one_file(Path::new(path))?];
+    save_results_json(&results, save_json, case)?;
+    Ok(results)
+}
+
+fn save_results_json(
+    results: &[ScanResult],
+    save_json: bool,
+    case: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let is_gui = std::env::var("MALCHELA_GUI_MODE").is_ok();
+    if save_json && !is_gui && case.is_none() {
+        let output_dir = Path::new("saved_output").join("fileminer");
+        fs::create_dir_all(&output_dir)?;
+        let out_path = output_dir.join("fileminer_output.json");
+        let file = File::create(&out_path)?;
+        serde_json::to_writer_pretty(file, &results)?;
+        println!("Results saved to {}", out_path.display());
+    }
+    Ok(())
+}
+
+// infer only recognizes binary format magic-byte signatures — there's no
+// signature for plain text, so identify_magic() returns "Unknown" for
+// every genuine plaintext file (a readme, a log, a config), not just
+// disguised binaries. The txt/log mismatch check used to take that
+// "Unknown" at face value, which meant every legitimate .txt file got
+// flagged as a mismatch. This is the standard binary-vs-text heuristic
+// (the same one git and the `file` command use as a first pass): no
+// embedded NUL byte and a high ratio of printable/whitespace bytes in a
+// sample of the content.
+fn looks_like_text(path: &Path) -> bool {
+    let Ok(mut file) = File::open(path) else { return false };
+    let mut buffer = vec![0u8; 8000];
+    let Ok(n) = file.read(&mut buffer) else { return false };
+    let sample = &buffer[..n];
+    if sample.is_empty() {
+        return true; // empty file — nothing to contradict "text"
+    }
+    if sample.contains(&0u8) {
+        return false; // NUL byte — binary, not text
+    }
+    let printable = sample
+        .iter()
+        .filter(|&&b| b == b'\n' || b == b'\r' || b == b'\t' || (0x20..=0x7e).contains(&b) || b >= 0x80)
+        .count();
+    (printable as f64 / sample.len() as f64) >= 0.95
+}
+
+fn identify_magic(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let mut file = File::open(path)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+
+    if let Some(kind) = infer::get(&buffer) {
+        Ok(kind.mime_type().to_string())
+    } else {
+        Ok("Unknown".to_string())
+    }
+}
+
+fn calculate_sha256(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 4096];
+
+    loop {
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..bytes_read]);  // ✅ semicolon here
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))  // ✅ this should be outside the loop
+}
+
+fn calculate_md5(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let mut file = File::open(path)?;
+    let mut hasher = md5::Context::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 { break; }
+        hasher.consume(&buffer[..n]);
+    }
+    Ok(format!("{:x}", hasher.compute()))
+}
+
+fn calculate_sha1(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let mut file = File::open(path)?;
+    let mut hasher = sha1::Sha1::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 { break; }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}

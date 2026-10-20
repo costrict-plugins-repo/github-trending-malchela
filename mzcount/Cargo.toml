@@ -1,0 +1,15 @@
+[package]
+name = "mzcount"
+version = "4.3.1"
+edition = "2021"
+
+[dependencies]
+clearscreen = "4.0.3"
+walkdir = "2.5.0"
+yara = "0.30.0"
+yara-sys = "0.29.0"
+colored = "2" #Or newer
+atty = "0.2.14"
+chrono = "0.4.43"
+clap = "4.5.57"
+common_config = { path = "../common_config" }

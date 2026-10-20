@@ -1,0 +1,245 @@
+use std::process::{Command, Stdio};
+use std::io::{self, Write};
+use std::env;
+use std::path::PathBuf;
+use std::fs;
+
+use colored::*;
+use rand::prelude::IndexedRandom;
+use serde::Deserialize;
+
+use crate::menu::{generate_tool_menu};
+
+#[derive(Debug, Deserialize)]
+struct Koans {
+    koans: Vec<String>,
+}
+
+fn load_random_koan() -> String {
+    find_workspace_root()
+        .ok()
+        .and_then(|root| std::fs::read_to_string(root.join("assets/koans/crabby_koans.yaml")).ok())
+        .and_then(|content| serde_yaml::from_str::<Koans>(&content).ok())
+        .and_then(|k| k.koans.choose(&mut rand::rng()).cloned())
+        .unwrap_or_else(|| "🦀 No koan today.".to_string())
+}
+
+mod theme;
+mod menu;
+
+fn find_workspace_root() -> io::Result<PathBuf> {
+    let exe_path = env::current_exe()?;
+    let resolved_exe_path = fs::canonicalize(exe_path)?;
+
+    if let Some(parent1) = resolved_exe_path.parent() {
+        if let Some(parent2) = parent1.parent() {
+            if let Some(parent3) = parent2.parent() {
+                let workspace_root = parent3.to_path_buf();
+                if workspace_root.exists() && workspace_root.is_dir() {
+                    return Ok(workspace_root);
+                }
+            }
+        }
+    }
+    eprintln!("{}", "Error: Workspace root not found.".red());
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "Workspace root not found",
+    ))
+}
+
+fn check_for_updates() -> io::Result<()> {
+    let workspace_root = find_workspace_root()?;
+
+    let update_output = Command::new("git")
+        .arg("remote")
+        .arg("update")
+        .current_dir(&workspace_root)
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .output()?;
+
+    if !update_output.status.success() {
+        io::stderr().write_all(&update_output.stderr)?;
+        eprintln!("{}", "Error: Git remote update failed.".red());
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Git remote update failed",
+        ));
+    }
+
+    let status_output = Command::new("git")
+        .arg("status")
+        .arg("-uno")
+        .current_dir(&workspace_root)
+        .output()?;
+
+    let status_str = String::from_utf8_lossy(&status_output.stdout);
+
+    if status_str.contains("branch is behind") {
+        println!(
+            "{}",
+            "Update available. Please run `git pull` from the workspace root.".yellow()
+        );
+    } else {
+        println!("{}", "MalChela is up to date!".green());
+    }
+
+    let koan = load_random_koan();
+    println!();
+    println!("{}", koan.truecolor(255, 121, 63));
+
+    Ok(())
+}
+
+fn clear_screen() {
+    if cfg!(target_os = "windows") {
+        let _ = Command::new("cmd").arg("/C").arg("cls").status();
+    } else {
+        let _ = Command::new("clear").status();
+    }
+}
+
+fn pause() {
+    println!("\nPress Enter to continue...");
+    let mut buffer = String::new();
+    let _ = io::stdin().read_line(&mut buffer);
+}
+
+fn print_banner() {
+    let crab_art = r#"
+                ▒▒▒▒▒▒▒▒        ▒▒▒▒▒▒▒▒                                
+              ▒▒▒▒▒▒                ▒▒▒▒▒▒                              
+              ▒▒▒▒▒▒▒▒▒▒        ▒▒▒▒▒▒▒▒▒▒                              
+            ▒▒▒▒▒▒▒▒▒▒            ▒▒▒▒▒▒▒▒▒▒                            
+            ▒▒▒▒      ██        ██      ▒▒▒▒                            
+            ▒▒▒▒    ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒    ▒▒▒▒                            
+            ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                            
+              ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                              
+                  ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                  
+              ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                              
+            ▒▒▒▒    ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒    ▒▒▒▒                            
+                  ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒                                  
+                ▒▒▒▒    ▒▒▒▒▒▒▒▒    ▒▒▒▒                                
+    "#;
+    println!("{}", crab_art.red());
+    println!("        {}", "    https://bakerstreetforensics.com".truecolor(110, 130, 140));
+    println!();
+    println!("        {}", "    MalChela Analysis Toolkit v4.3.1".yellow());
+    println!();
+}
+
+fn main() {
+    print_banner();
+
+    if let Err(err) = check_for_updates() {
+        eprintln!("{}", format!("Error checking for updates: {}", err).red());
+    }
+
+    pause();
+
+    let tool_menu = generate_tool_menu();
+
+    loop {
+        clear_screen();
+        print_banner();
+
+        println!("  {}", "Available Tools:".cyan());
+        let formatted_tools: Vec<String> = tool_menu
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| format!("  {}", format!("[{}] {} ({})", i + 1, entry.display_name, entry.shortcode).cyan()))
+            .collect();
+
+        let max_width = formatted_tools
+            .iter()
+            .take((formatted_tools.len() + 1) / 2)
+            .map(|s| s.len())
+            .max()
+            .unwrap_or(0) + 4;
+
+        let half = (formatted_tools.len() + 1) / 2;
+        for i in 0..half {
+            let left = &formatted_tools[i];
+            let right = formatted_tools.get(i + half);
+            match right {
+                Some(r) => println!("{:<width$}{}", left, r, width = max_width),
+                None => println!("{}", left),
+            }
+        }
+        println!("\n{}", "[0] Exit".cyan());
+
+        print!("\n{} ", "Select a tool by number or shortcode:".cyan());
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            println!("{}", "Failed to read input.".red());
+            continue;
+        }
+
+        let input = input.trim();
+
+        if input == "0" || input.eq_ignore_ascii_case("exit") {
+            println!("{}", "Exiting...".yellow());
+            break;
+        }
+
+        let selected = if let Ok(num) = input.parse::<usize>() {
+            if num == 0 || num > tool_menu.len() {
+                None
+            } else {
+                Some(&tool_menu[num - 1])
+            }
+        } else {
+            tool_menu.iter().find(|entry| entry.shortcode.eq_ignore_ascii_case(input))
+        };
+
+        if let Some(entry) = selected {
+            println!("{}", format!("Launching: {}", entry.display_name).cyan());
+            let binary_path = std::path::Path::new(&entry.binary_path);
+
+
+
+            if !binary_path.exists() {
+                eprintln!("❌ Binary not found at: {}", binary_path.display());
+                eprintln!("🏃‍♂️ Run release.sh in workspace root")
+            } else if let Ok(workspace_root) = find_workspace_root() {
+                let launch_result = if entry.shortcode == "ml" {
+                    // Explicit path to MITRE JSON in workspace root
+                    Command::new(binary_path)
+                        .env("MITRE_ASSETS_DIR", workspace_root.join("assets").to_string_lossy().to_string())
+                        .current_dir(&workspace_root)
+                        .spawn()
+                } else if entry.shortcode == "mstrings" {
+                    println!("📂 Working directory: {}", workspace_root.display());
+                    // We don't have direct access to the arguments here, but let's build the command to inspect args
+                    let mut cmd = Command::new(binary_path);
+                    cmd.current_dir(&workspace_root);
+                    println!("🧵 Args: {:?}", cmd.get_args());
+                    cmd.spawn()
+                } else {
+                    Command::new(binary_path)
+                        .current_dir(&workspace_root)
+                        .spawn()
+                };
+
+                match launch_result {
+                    Ok(mut child_proc) => {
+                        let _ = child_proc.wait();
+                    }
+                    Err(e) => {
+                        eprintln!("{}", format!("❌ Failed to launch command: {}", e).red());
+                    }
+                }
+            } else {
+                eprintln!("{}", "❌ Failed to locate workspace root.".red());
+            }
+
+            pause();
+        } else {
+            println!("{}", "Invalid selection, please try again.".red());
+            pause();
+        }
+    }
+}

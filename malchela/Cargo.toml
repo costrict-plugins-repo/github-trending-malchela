@@ -1,0 +1,20 @@
+[package]
+name = "malchela"
+version = "4.3.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+prettytable-rs = "0.10.0" # Or the latest version
+colored = "2.2" # Or the latest version
+dialoguer = "0.11"
+console = "0.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+rand = "0.9.3"
+dispatch = "0.2.0"
+
+[[bin]]
+name = "malchela"
+path = "src/main.rs"

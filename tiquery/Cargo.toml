@@ -1,0 +1,31 @@
+[package]
+name = "tiquery"
+version = "4.3.1"
+edition = "2021"
+
+[[bin]]
+name = "tiquery"
+path = "src/main.rs"
+
+[dependencies]
+tokio        = { version = "1", features = ["full"] }
+reqwest      = { version = "0.11", features = ["json", "stream"] }
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+serde_yaml   = "0.9"
+clap         = { version = "4", features = ["derive"] }
+csv          = "1"
+colored      = "3.1.1"
+anyhow       = "1"
+sha2         = "0.10"
+md-5         = "0.10"
+hex          = "0.4"
+dirs         = "5"
+indicatif    = "0.17"
+async-trait  = "0.1"
+futures      = "0.3"
+chrono       = "0.4"
+base64       = "0.21"
+image        = "0.25"
+rqrr         = "0.10"
+common_config = { path = "../common_config" }
